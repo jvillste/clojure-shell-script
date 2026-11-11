@@ -1,4 +1,4 @@
-;;; cider-script-jack-in.el --- Jack in to a Clojure shell script  -*- lexical-binding: t; -*-
+;;; clojure-shell-script.el --- Cider jack in to a Clojure shell script  -*- lexical-binding: t; -*-
 
 ;; A script that runs through `clojure-shell-script' carries its tools.deps map
 ;; on the second line:
@@ -19,8 +19,8 @@
 ;;
 ;; Enable it once in your init file:
 ;;
-;;   (require 'cider-script-jack-in)
-;;   (add-hook 'clojure-mode-hook #'cider-script-jack-in-setup)
+;;   (require 'clojure-shell-script)
+;;   (add-hook 'clojure-mode-hook #'clojure-shell-script-setup)
 
 ;;; Code:
 
@@ -28,10 +28,10 @@
 (require 'parseedn)
 (require 'subr-x)
 
-(defconst cider-script-jack-in--alias :cider/nrepl
+(defconst clojure-shell-script--alias :cider/nrepl
   "The alias CIDER always activates, used to extend the classpath.")
 
-(defun cider-script-jack-in--shebang (file)
+(defun clojure-shell-script--shebang (file)
   "Return the shebang line of FILE, or nil."
   (when (file-readable-p file)
     (with-temp-buffer
@@ -42,14 +42,14 @@
         (when (string-prefix-p "#!" line)
           line)))))
 
-(defun cider-script-jack-in--script-p (file)
+(defun clojure-shell-script--script-p (file)
   "Return non-nil when FILE's shebang names `clojure-shell-script'.
 The name is matched at the end of the interpreter path, so both
 `#!/workspace/clojure-shell-script' and `#!./clojure-shell-script' count."
-  (when-let* ((shebang (cider-script-jack-in--shebang file)))
+  (when-let* ((shebang (clojure-shell-script--shebang file)))
     (string-match-p "clojure-shell-script\\'" (string-trim (substring shebang 2)))))
 
-(defun cider-script-jack-in--deps-line (file)
+(defun clojure-shell-script--deps-line (file)
   "Return the tools.deps map text on the second line of FILE, or nil.
 The leading quote that keeps the shell script from being read as Clojure code
 is removed."
@@ -64,15 +64,15 @@ is removed."
         (when (string-prefix-p "{" (setq line (string-remove-prefix "'" line)))
           line)))))
 
-(defun cider-script-jack-in--deps-map (file)
+(defun clojure-shell-script--deps-map (file)
   "Return the tools.deps map on the second line of FILE, or nil."
-  (when-let* ((line (cider-script-jack-in--deps-line file)))
+  (when-let* ((line (clojure-shell-script--deps-line file)))
     (condition-case nil
         (let ((parsed (parseedn-read-str line)))
           (and (hash-table-p parsed) parsed))
       (error nil))))
 
-(defun cider-script-jack-in--merge (base override)
+(defun clojure-shell-script--merge (base override)
   "Return OVERRIDE merged into BASE.
 Nested maps are merged recursively; any other value in OVERRIDE wins.  This
 keeps CIDER's injected dependencies while letting the script override them."
@@ -83,17 +83,17 @@ keeps CIDER's injected dependencies while letting the script override them."
                      (puthash key
                               (if (eq existing ::missing)
                                   value
-                                (cider-script-jack-in--merge existing value))
+                                (clojure-shell-script--merge existing value))
                               result)))
                  override)
         result)
     override))
 
-(defun cider-script-jack-in--relative (directory project-directory)
+(defun clojure-shell-script--relative (directory project-directory)
   "Return DIRECTORY as a path relative to PROJECT-DIRECTORY."
   (directory-file-name (file-relative-name directory project-directory)))
 
-(defun cider-script-jack-in--classpath-entries (file project-directory deps)
+(defun clojure-shell-script--classpath-entries (file project-directory deps)
   "Return classpath entries for FILE, relative to PROJECT-DIRECTORY.
 The script's own directory is always included so that CIDER can load its
 namespace.  Paths declared by the script are resolved against the script's
@@ -101,16 +101,16 @@ directory, which is how `clojure-shell-script' would see them.  DEPS is the
 script's deps map."
   (let* ((script-directory (file-name-directory (expand-file-name file)))
          (declared (or (and deps (gethash :paths deps)) []))
-         (paths (cons (cider-script-jack-in--relative script-directory
+         (paths (cons (clojure-shell-script--relative script-directory
                                                       project-directory)
                       (mapcar (lambda (path)
-                                (cider-script-jack-in--relative
+                                (clojure-shell-script--relative
                                  (expand-file-name path script-directory)
                                  project-directory))
                               declared))))
     (vconcat (delete-dups paths))))
 
-(defun cider-script-jack-in--without-paths (deps)
+(defun clojure-shell-script--without-paths (deps)
   "Return DEPS with :paths removed.
 The paths cannot be merged into the top-level map: whatever `-Sdeps' says
 about :paths replaces the project's own paths, so they are moved to an
@@ -119,21 +119,21 @@ alias instead."
     (remhash :paths result)
     result))
 
-(defun cider-script-jack-in--add-extra-paths (deps extra-paths)
+(defun clojure-shell-script--add-extra-paths (deps extra-paths)
   "Return DEPS with EXTRA-PATHS added to the alias CIDER activates."
   (let* ((result (copy-hash-table deps))
          (aliases (or (gethash :aliases result) (make-hash-table :test #'equal)))
-         (alias (or (gethash cider-script-jack-in--alias aliases)
+         (alias (or (gethash clojure-shell-script--alias aliases)
                     (make-hash-table :test #'equal)))
          (existing (or (gethash :extra-paths alias) [])))
     (setq aliases (copy-hash-table aliases)
           alias (copy-hash-table alias))
     (puthash :extra-paths (vconcat existing extra-paths) alias)
-    (puthash cider-script-jack-in--alias alias aliases)
+    (puthash clojure-shell-script--alias alias aliases)
     (puthash :aliases aliases result)
     result))
 
-(defun cider-script-jack-in--injected (parameters)
+(defun clojure-shell-script--injected (parameters)
   "Return the command CIDER injects for PARAMETERS, split into parts.
 The value is a list of the deps map and the trailing `-M' argument, so that
 the map can be rewritten while everything else is passed through as is."
@@ -144,20 +144,20 @@ the map can be rewritten while everything else is passed through as is."
            (replace-regexp-in-string "\\\\\\(.\\)" "\\1" (match-string 1 injected)))
           (string-trim (match-string 2 injected)))))
 
-(defun cider-script-jack-in--command (file project-directory)
+(defun clojure-shell-script--command (file project-directory)
   "Return a jack-in command for FILE with its deps map merged in, or nil.
 PROJECT-DIRECTORY is where `clojure' runs, so classpath entries are made
 relative to it."
-  (when-let* ((script-deps (cider-script-jack-in--deps-map file))
+  (when-let* ((script-deps (clojure-shell-script--deps-map file))
               (command (cider-jack-in-resolve-command 'clojure-cli))
               (parameters (or (cider-jack-in-params 'clojure-cli) ""))
-              (injected (cider-script-jack-in--injected parameters))
-              (merged (cider-script-jack-in--merge
+              (injected (clojure-shell-script--injected parameters))
+              (merged (clojure-shell-script--merge
                        (car injected)
-                       (cider-script-jack-in--without-paths script-deps)))
-              (merged (cider-script-jack-in--add-extra-paths
+                       (clojure-shell-script--without-paths script-deps)))
+              (merged (clojure-shell-script--add-extra-paths
                        merged
-                       (cider-script-jack-in--classpath-entries
+                       (clojure-shell-script--classpath-entries
                         file project-directory script-deps))))
     (format "%s -Sdeps %s %s"
             command
@@ -165,17 +165,17 @@ relative to it."
             (cadr injected))))
 
 ;;;###autoload
-(defun cider-script-jack-in-setup ()
+(defun clojure-shell-script-setup ()
   "Jack in with the deps map on the second line of a `clojure-shell-script'.
 Meant for `clojure-mode-hook'.  Does nothing unless the buffer's shebang
 names `clojure-shell-script' and its second line is a tools.deps map, so
 ordinary Clojure buffers keep the normal jack-in."
   (when-let* ((file (buffer-file-name))
-              ((cider-script-jack-in--script-p file))
+              ((clojure-shell-script--script-p file))
               (project-directory (or (cider-project-dir)
                                      (file-name-directory file)))
-              (command (cider-script-jack-in--command file project-directory)))
+              (command (clojure-shell-script--command file project-directory)))
     (setq-local cider-jack-in-cmd command)))
 
-(provide 'cider-script-jack-in)
-;;; cider-script-jack-in.el ends here
+(provide 'clojure-shell-script)
+;;; clojure-shell-script.el ends here
