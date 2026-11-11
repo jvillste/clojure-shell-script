@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# clojure-shell-script: run a Clojure file as if it were an executable shell
+# script, feeding the tools.deps map found on the second line to the Clojure
+# CLI.
+#
+#   #!/path/to/clojure-shell-script
+#   '{:deps {babashka/fs {:mvn/version "0.5.34"}}}
+#
+#   (ns example (:require [babashka.fs :as fs]))
+#
+#   (println (fs/directory? (first *command-line-args*)))
+#
+# Usage: clojure-shell-script <script.clj> [arg ...]
+#
+# The second line is optional and may be either a quoted or an unquoted EDN
+# map; it is passed to clojure via -Sdeps. Without such a line the script runs
+# with the default classpath. The remaining arguments are handed to the script
+# as *command-line-args*.
+
+set -o errexit
+set -o pipefail
+
+if [ "$#" -lt 1 ]; then
+  printf 'usage: %s <script.clj> [arg ...]\n' "${0##*/}" >&2
+  exit 2
+fi
+
+script_file=$1
+shift
+
+if [ ! -f "$script_file" ]; then
+  printf '%s: no such script: %s\n' "${0##*/}" "$script_file" >&2
+  exit 2
+fi
+
+# Use an absolute path so that clojure.main finds the script no matter which
+# directory it is started from.
+script_file=$(cd "$(dirname "$script_file")" && printf '%s/%s\n' "$PWD" "$(basename "$script_file")")
+
+if ! command -v clojure >/dev/null 2>&1; then
+  printf '%s: the clojure command is not on PATH\n' "${0##*/}" >&2
+  exit 127
+fi
+
+# Second line of the script, with the shebang-style quote and any surrounding
+# whitespace or carriage return removed.
+deps=$(sed -n '2p' "$script_file" \
+  | sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e "s/^'//" -e 's/[[:space:]]*$//')
+
+case $deps in
+  \{*)
+    exec clojure -Sdeps "$deps" -M "$script_file" "$@"
+    ;;
+  *)
+    exec clojure -M "$script_file" "$@"
+    ;;
+esac
